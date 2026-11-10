@@ -24,12 +24,15 @@ export interface Period {
   status: PeriodStatus;
 }
 
+export type CashFlowClass = "cash" | "operating" | "investing" | "financing" | "noncash" | "profit";
+
 export interface Account {
   id: string;
   entityId: string;
   code: string;
   name: string;
   type: AccountType;
+  flow?: CashFlowClass;
 }
 
 export interface JournalLine {
@@ -104,8 +107,9 @@ function acc(
   code: string,
   name: string,
   type: AccountType,
+  flow: CashFlowClass,
 ): Account {
-  return { id: `${entityId}_${code}`, entityId, code, name, type };
+  return { id: `${entityId}_${code}`, entityId, code, name, type, flow };
 }
 
 export const ENTITIES: Entity[] = [
@@ -131,25 +135,25 @@ export const PERIODS: Period[] = [
 ];
 
 const tradeAccounts: Account[] = [
-  acc(TRADE, "1000", "Cash at bank", "asset"),
-  acc(TRADE, "1100", "Accounts receivable", "asset"),
-  acc(TRADE, "1200", "Inventory", "asset"),
-  acc(TRADE, "1300", "Due from shareholder", "asset"),
-  acc(TRADE, "2000", "Accounts payable", "liability"),
-  acc(TRADE, "2100", "Due to director", "liability"),
-  acc(TRADE, "3000", "Share capital", "equity"),
-  acc(TRADE, "4000", "Sales", "revenue"),
-  acc(TRADE, "5000", "Purchases", "expense"),
+  acc(TRADE, "1000", "Cash at bank", "asset", "cash"),
+  acc(TRADE, "1100", "Accounts receivable", "asset", "operating"),
+  acc(TRADE, "1200", "Inventory", "asset", "operating"),
+  acc(TRADE, "1300", "Due from shareholder", "asset", "financing"),
+  acc(TRADE, "2000", "Accounts payable", "liability", "operating"),
+  acc(TRADE, "2100", "Due to director", "liability", "financing"),
+  acc(TRADE, "3000", "Share capital", "equity", "financing"),
+  acc(TRADE, "4000", "Sales", "revenue", "profit"),
+  acc(TRADE, "5000", "Purchases", "expense", "profit"),
 ];
 
 const rentalAccounts: Account[] = [
-  acc(RENTAL, "1000", "Cash at bank", "asset"),
-  acc(RENTAL, "1500", "Property, plant and equipment", "asset"),
-  acc(RENTAL, "1510", "Accumulated depreciation", "contra_asset"),
-  acc(RENTAL, "2100", "Due to director", "liability"),
-  acc(RENTAL, "2300", "Rental received in advance", "liability"),
-  acc(RENTAL, "4100", "Rental income", "revenue"),
-  acc(RENTAL, "6100", "Depreciation", "expense"),
+  acc(RENTAL, "1000", "Cash at bank", "asset", "cash"),
+  acc(RENTAL, "1500", "Property, plant and equipment", "asset", "investing"),
+  acc(RENTAL, "1510", "Accumulated depreciation", "contra_asset", "noncash"),
+  acc(RENTAL, "2100", "Due to director", "liability", "financing"),
+  acc(RENTAL, "2300", "Rental received in advance", "liability", "operating"),
+  acc(RENTAL, "4100", "Rental income", "revenue", "profit"),
+  acc(RENTAL, "6100", "Depreciation", "expense", "noncash"),
 ];
 
 export const SEED_ACCOUNTS: Account[] = [...tradeAccounts, ...rentalAccounts];
@@ -238,9 +242,11 @@ export function tbTotals(rows: TbRow[]) {
   };
 }
 
-const NATURAL_CREDIT = new Set<AccountType>(["liability", "equity", "revenue", "contra_asset"]);
+const NATURAL_CREDIT = new Set<AccountType>(["liability", "equity", "revenue"]);
 
 export function signedBalance(account: Account, balance: number): number {
+  if (account.type === "expense") return round2(-balance);
+  if (account.type === "contra_asset") return balance;
   return NATURAL_CREDIT.has(account.type) ? round2(-balance) : balance;
 }
 
@@ -298,6 +304,77 @@ export function statements(rows: TbRow[]): Statements {
     equityTotal,
     netAssets,
     balanced: Math.abs(netAssets - equityTotal) < 0.02,
+  };
+}
+
+export function accountFlow(account: Account): CashFlowClass {
+  if (account.flow) return account.flow;
+  const name = account.name.toLowerCase();
+  if (account.code === "1000" || /cash/.test(name)) return "cash";
+  if (account.type === "contra_asset" || /accumulat/.test(name)) return "noncash";
+  if (account.type === "expense" && /depreciat/.test(name)) return "noncash";
+  if (/property|plant|equipment/.test(name) || account.code.startsWith("15")) return "investing";
+  if (account.type === "equity" || /due to|due from|share capital|director|shareholder/.test(name)) return "financing";
+  if (account.type === "revenue" || account.type === "expense") return "profit";
+  return "operating";
+}
+
+export interface CashFlowStatement {
+  profit: number;
+  operating: StatementLine[];
+  operatingTotal: number;
+  investing: StatementLine[];
+  investingTotal: number;
+  financing: StatementLine[];
+  financingTotal: number;
+  net: number;
+  cashMovement: number;
+  ties: boolean;
+}
+
+export function cashFlow(rows: TbRow[], profit: number): CashFlowStatement {
+  const section = (flow: CashFlowClass, labelFor?: (row: TbRow) => string) =>
+    rows
+      .filter((row) => accountFlow(row.account) === flow && row.balance !== 0)
+      .filter((row) => !(flow === "noncash" && row.account.type === "contra_asset"))
+      .map((row) => {
+        const amount =
+          flow === "noncash" && row.account.type === "expense"
+            ? round2(-signedBalance(row.account, row.balance))
+            : round2(-row.balance);
+        return {
+          code: row.account.code,
+          name:
+            flow === "noncash" && row.account.type === "expense"
+              ? `${row.account.name} added back`
+              : row.account.name,
+          amount,
+        };
+      })
+      .filter((line) => line.amount !== 0);
+
+  const operating = section("noncash").concat(section("operating"));
+  const investing = section("investing");
+  const financing = section("financing");
+  const sum = (lines: StatementLine[]) => round2(lines.reduce((s, l) => s + l.amount, 0));
+  const operatingTotal = round2(profit + sum(operating));
+  const investingTotal = sum(investing);
+  const financingTotal = sum(financing);
+  const net = round2(operatingTotal + investingTotal + financingTotal);
+  const cashMovement = round2(
+    rows.filter((row) => accountFlow(row.account) === "cash").reduce((s, row) => s + row.balance, 0),
+  );
+  return {
+    profit,
+    operating,
+    operatingTotal,
+    investing,
+    investingTotal,
+    financing,
+    financingTotal,
+    net,
+    cashMovement,
+    ties: Math.abs(net - cashMovement) < 0.02,
   };
 }
 
