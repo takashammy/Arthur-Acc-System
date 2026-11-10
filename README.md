@@ -38,7 +38,18 @@ npm install
 npm run dev
 ```
 
-See `src/lib/accounting/` for domain types and invariant enforcement.
+See `src/lib/accounting/` for domain types, invariant enforcement, the reconstructed Harbour Trade / Harbour Rental books (`model.ts`), and the Excel journal importer (`excel.ts`).
+
+The importer accepts `.xlsx` / `.csv` general journals:
+
+- signed amounts (debit positive, credit negative)
+- Excel serial dates (1899-12-30 epoch)
+- header detection, with a fallback column order of date / voucher / account / description / amount
+- reused voucher numbers that contain more than one balanced entry are blocked
+- multi-date vouchers are warned
+- unbalanced vouchers are blocked
+
+Sample books in `model.ts` are posted journals that reconstruct the management-account figures (trade profit 6,366.34 and net assets 16,366.34; rental loss 56,000.00 with cash 1,288,000). Reports must keep current-year result separate from opening equity.
 
 ## Build order
 1. Foundation (auth, firm, client, entity, period, RBAC)
