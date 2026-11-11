@@ -1,5 +1,7 @@
 # Arthur Accounting System
 
+**Version 1.0** — 11 November 2026. See [VERSION.md](VERSION.md).
+
 Hong Kong-first AI Accounting Firm Operating System.
 
 AI prepares bookkeeping, management accounts, profits-tax computations, and company-secretarial drafts. Humans review and approve. Internal firm OS for V1; white-label later.
