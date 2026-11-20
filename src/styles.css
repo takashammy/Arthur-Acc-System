@@ -1,0 +1,97 @@
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,480;6..72,560&family=Outfit:wght@400;500;600&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", Georgia, serif;
+  --color-paper: #f3efe6;
+  --color-ink: #1a1814;
+  --color-panel: #faf8f4;
+  --color-line: #ddd6c8;
+  --color-pine: #1e4d3a;
+  --color-pine-soft: #e5efe8;
+  --color-seal: #8f3d32;
+  --color-brass: #8a6a32;
+  --color-muted: #6f675e;
+  --color-warn-bg: #f6edd9;
+  --radius-card: 0.9rem;
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  body {
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+  }
+  :root {
+    --chart-grid: #eee8dc;
+    --chart-tick: #6f675e;
+    --chart-a: #1e4d3a;
+    --chart-b: #8a5a44;
+    --chart-c: #1d4e89;
+    --chart-cursor: #f3efe6;
+    --chart-tip: #faf8f4;
+    --chart-tip-border: #ddd6c8;
+  }
+}
+
+html[data-theme="cyber"] {
+  color-scheme: dark;
+  --color-paper: #070b14;
+  --color-ink: #e7f2fb;
+  --color-panel: #101826;
+  --color-line: #2a3b52;
+  --color-pine: #3ad7f5;
+  --color-pine-soft: #12303a;
+  --color-seal: #ff7aa2;
+  --color-brass: #f0c36a;
+  --color-muted: #9aafc6;
+  --color-warn-bg: #2c2416;
+  --chart-grid: #243246;
+  --chart-tick: #9aafc6;
+  --chart-a: #3ad7f5;
+  --chart-b: #ff7aa2;
+  --chart-c: #d6f25c;
+  --chart-cursor: #162033;
+  --chart-tip: #101826;
+  --chart-tip-border: #2a3b52;
+}
+
+html[data-theme="cyber"] body {
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(rgba(58, 215, 245, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(58, 215, 245, 0.045) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+html[data-theme="cyber"] .bg-panel {
+  box-shadow: inset 0 0 0 1px rgba(58, 215, 245, 0.14);
+}
+
+html[data-theme="cyber"] input,
+html[data-theme="cyber"] select,
+html[data-theme="cyber"] textarea {
+  color: var(--color-ink);
+}
+
+html[data-theme="cyber"] ::placeholder {
+  color: var(--color-muted);
+}
+
+html[data-theme="cyber"] :focus-visible {
+  outline: 2px solid var(--color-pine);
+  outline-offset: 2px;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}

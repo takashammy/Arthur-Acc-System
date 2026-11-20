@@ -16,15 +16,54 @@ export interface Entity {
   crNumber: string;
   currency: "HKD";
   yearEnd: string;
+  incorporated?: string;
+  registeredOffice?: string;
 }
 
 export interface Period {
   entityId: string;
   label: string;
   status: PeriodStatus;
+  startsOn?: string;
+  endsOn?: string;
 }
 
 export type CashFlowClass = "cash" | "operating" | "investing" | "financing" | "noncash" | "profit";
+
+/** Standard chart given to a new company. The reference list, not a company's live accounts. */
+export const STANDARD_CODES: { code: string; name: string; type: AccountType; flow: CashFlowClass }[] = [
+  { code: "1000", name: "Cash at bank and on hand", type: "asset", flow: "cash" },
+  { code: "1100", name: "Accounts receivable", type: "asset", flow: "operating" },
+  { code: "1200", name: "Inventory", type: "asset", flow: "operating" },
+  { code: "1300", name: "Amount due from shareholder", type: "asset", flow: "financing" },
+  { code: "1400", name: "Other receivables", type: "asset", flow: "operating" },
+  { code: "1450", name: "Deposit paid", type: "asset", flow: "operating" },
+  { code: "1500", name: "Property, plant and equipment — cost", type: "asset", flow: "investing" },
+  { code: "1510", name: "Property, plant and equipment — accumulated depreciation", type: "contra_asset", flow: "noncash" },
+  { code: "1600", name: "Right-of-use asset", type: "asset", flow: "investing" },
+  { code: "1610", name: "Accumulated depreciation — leases", type: "contra_asset", flow: "noncash" },
+  { code: "2000", name: "Accounts payable", type: "liability", flow: "operating" },
+  { code: "2050", name: "Other payables", type: "liability", flow: "operating" },
+  { code: "2100", name: "Amount due to director", type: "liability", flow: "financing" },
+  { code: "2150", name: "MPF payable", type: "liability", flow: "operating" },
+  { code: "2200", name: "Accrued expenses", type: "liability", flow: "operating" },
+  { code: "2300", name: "Tax payable", type: "liability", flow: "operating" },
+  { code: "2400", name: "Lease liability", type: "liability", flow: "financing" },
+  { code: "2500", name: "Bank loan", type: "liability", flow: "financing" },
+  { code: "3000", name: "Share capital", type: "equity", flow: "financing" },
+  { code: "3100", name: "Retained earnings", type: "equity", flow: "financing" },
+  { code: "4000", name: "Sales", type: "revenue", flow: "profit" },
+  { code: "4100", name: "Other income", type: "revenue", flow: "profit" },
+  { code: "5000", name: "Purchases", type: "expense", flow: "profit" },
+  { code: "5100", name: "Cost of sales", type: "expense", flow: "profit" },
+  { code: "6100", name: "Staff salaries", type: "expense", flow: "profit" },
+  { code: "6110", name: "MPF expense", type: "expense", flow: "profit" },
+  { code: "6200", name: "Rental fee", type: "expense", flow: "profit" },
+  { code: "6210", name: "Depreciation — leases", type: "expense", flow: "noncash" },
+  { code: "6300", name: "Lease interest", type: "expense", flow: "profit" },
+  { code: "6400", name: "Administrative expenses", type: "expense", flow: "profit" },
+  { code: "6500", name: "Depreciation", type: "expense", flow: "noncash" },
+];
 
 export interface Account {
   id: string;
@@ -63,8 +102,25 @@ export interface DraftLine {
 
 let seq = 1;
 export function uid(prefix: string): string {
-  seq += 1;
-  return `${prefix}_${seq.toString(36)}`;
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}${(seq += 1).toString(36)}`;
+  return `${prefix}_${random}`;
+}
+
+/** Classify an imported account name. Income is tested before expenses so "interest income" is not an expense. */
+export function guessAccountType(name: string): AccountType {
+  const n = name.toLowerCase();
+  if (/acc\.?\s*dep|accumul/.test(n)) return "contra_asset";
+  if (/share capital|retained earn|equity/.test(n)) return "equity";
+  if (/interest income|sundry income|other income|\bsales\b|\brevenue\b/.test(n)) return "revenue";
+  if (
+    /fee|expense|charge|purchase|depreciat|salar|\bmpf\b|rental|rent|interest|postage|insurance|entertain|advertis|utilit|telephone|internet|stationer|travell|sundry|welfare|audit|accounting|repair|messing|remuneration|cost of sales/.test(
+      n,
+    )
+  ) {
+    return "expense";
+  }
+  if (/payable|accrued|accrual|due to|overdraft|bank loan|lease liabilit|tax payable|provision/.test(n)) return "liability";
+  return "asset";
 }
 
 function line(
@@ -214,12 +270,23 @@ export interface TbRow {
   balance: number;
 }
 
-export function trialBalance(accounts: Account[], journals: Journal[], entityId: string): TbRow[] {
+export function trialBalance(
+  accounts: Account[],
+  journals: Journal[],
+  entityId: string,
+  range?: { from?: string; to?: string; excludeClose?: boolean },
+): TbRow[] {
   const rows = new Map<string, TbRow>();
   for (const account of accounts.filter((a) => a.entityId === entityId)) {
     rows.set(account.id, { account, debit: 0, credit: 0, balance: 0 });
   }
-  for (const journalEntry of journals.filter((j) => j.entityId === entityId && j.status === "posted")) {
+  for (const journalEntry of journals.filter((j) => {
+    if (j.entityId !== entityId || j.status !== "posted") return false;
+    if (range?.excludeClose && /year-end close/i.test(j.reason)) return false;
+    if (range?.from && j.date < range.from) return false;
+    if (range?.to && j.date > range.to) return false;
+    return true;
+  })) {
     for (const entry of journalEntry.lines) {
       const row = rows.get(entry.accountId);
       if (!row) continue;
@@ -228,7 +295,18 @@ export function trialBalance(accounts: Account[], journals: Journal[], entityId:
     }
   }
   for (const row of rows.values()) {
-    row.balance = round2(row.debit - row.credit);
+    const net = round2(row.debit - row.credit);
+    row.balance = net;
+    if (net > 0) {
+      row.debit = net;
+      row.credit = 0;
+    } else if (net < 0) {
+      row.debit = 0;
+      row.credit = round2(-net);
+    } else {
+      row.debit = 0;
+      row.credit = 0;
+    }
   }
   return [...rows.values()]
     .filter((row) => row.debit !== 0 || row.credit !== 0)

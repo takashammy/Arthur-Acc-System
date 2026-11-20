@@ -83,6 +83,38 @@ function signedToColumns(amount: number): { debit: number; credit: number } {
   return { debit: 0, credit: round2(-amount) };
 }
 
+function splitAmount(debitCell: unknown, creditCell: unknown): number | null {
+  const debit = parseAmount(debitCell);
+  const credit = parseAmount(creditCell);
+  if (debit === null && credit === null) return null;
+  if ((debit ?? 0) === 0 && (credit ?? 0) === 0) return null;
+  return round2((debit ?? 0) - (credit ?? 0));
+}
+
+function normName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Match an imported account name to the chart. Close matches prefer the longer existing name. */
+export function suggestAccount(
+  name: string,
+  accounts: { id: string; code: string; name: string }[],
+): { id: string; how: "exact" | "close" | "" } {
+  const wanted = normName(name);
+  if (!wanted) return { id: "", how: "" };
+  const exact = accounts.find((account) => normName(account.name) === wanted || account.code.toLowerCase() === wanted);
+  if (exact) return { id: exact.id, how: "exact" };
+  const ranked = accounts
+    .map((account) => ({ account, label: normName(account.name) }))
+    .filter((item) => item.label.length >= 8 && wanted.length >= 8 && (wanted.includes(item.label) || item.label.includes(wanted)))
+    .sort((a, b) => b.label.length - a.label.length);
+  if (ranked.length === 0) return { id: "", how: "" };
+  if (ranked.length === 1 || ranked[0].label.length > ranked[1].label.length) {
+    return { id: ranked[0].account.id, how: "close" };
+  }
+  return { id: "", how: "" };
+}
+
 interface RawJournalRow {
   date: { iso: string; raw: string } | null;
   voucher: string;
@@ -100,6 +132,8 @@ function rowsFromMatrix(matrix: unknown[][]): RawJournalRow[] {
   let accountIdx = 2;
   let descriptionIdx = 3;
   let amountIdx = 4;
+  let debitIdx = -1;
+  let creditIdx = -1;
   let start = 0;
   if (looksLikeHeader(first)) {
     start = 1;
@@ -108,18 +142,24 @@ function rowsFromMatrix(matrix: unknown[][]): RawJournalRow[] {
     const foundAccount = columnIndex(first, [/ledger/, /account/, /code/, /category/]);
     const foundDesc = columnIndex(first, [/desc/, /particular/, /narrat/]);
     const foundAmount = columnIndex(first, [/amount/, /signed/, /hkd/, /balance/]);
+    const foundDebit = columnIndex(first, [/^debit/, /\bdr\b/]);
+    const foundCredit = columnIndex(first, [/^credit/, /\bcr\b/]);
     if (foundDate >= 0) dateIdx = foundDate;
     if (foundVoucher >= 0) voucherIdx = foundVoucher;
     if (foundAccount >= 0) accountIdx = foundAccount;
     if (foundDesc >= 0) descriptionIdx = foundDesc;
     if (foundAmount >= 0) amountIdx = foundAmount;
+    if (foundDebit >= 0 && foundCredit >= 0 && foundDebit !== foundCredit) {
+      debitIdx = foundDebit;
+      creditIdx = foundCredit;
+    }
   }
   return table.slice(start).map((row) => ({
     date: parseDate(row[dateIdx]),
     voucher: norm(row[voucherIdx]),
     account: norm(row[accountIdx]),
     description: norm(row[descriptionIdx]),
-    amount: parseAmount(row[amountIdx]),
+    amount: debitIdx >= 0 ? splitAmount(row[debitIdx], row[creditIdx]) : parseAmount(row[amountIdx]),
   }));
 }
 
@@ -254,6 +294,21 @@ export function parseWorkbook(fileName: string, data: ArrayBuffer): ImportResult
       sheetNames: [],
       vouchers: [],
       issues: [{ level: "error", code: "empty", message: "The workbook has no sheets." }],
+      source: "none",
+    };
+  }
+  if (sheetScore(chosen) === 0 && /balance|income|imcome|trial|profit/i.test(chosen)) {
+    return {
+      fileName,
+      sheetNames: book.SheetNames,
+      vouchers: [],
+      issues: [
+        {
+          level: "error",
+          code: "not-a-journal",
+          message: `“${chosen}” is a statement, not a journal. Nothing was read for posting. Add a General Journal sheet with date, voucher, account, description, and amount.`,
+        },
+      ],
       source: "none",
     };
   }

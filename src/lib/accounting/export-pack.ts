@@ -21,13 +21,15 @@ export function downloadManagementPack(input: {
   rows: TbRow[];
   report: Statements;
   flow: CashFlowStatement;
+  notes?: { account: string; note: string }[];
+  locked?: boolean;
 }) {
   const totals = tbTotals(input.rows);
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     book,
     lines([
-      [input.entityName, input.period],
+      [input.entityName, input.period, input.locked ? "Locked for issue" : "Draft"],
       ["Code", "Account", "Debit", "Credit"],
       ...input.rows.map((row) => [row.account.code, row.account.name, row.debit, row.credit]),
       ["", "Total", totals.debit, totals.credit],
@@ -68,6 +70,13 @@ export function downloadManagementPack(input: {
     ]),
     "Cash flow",
   );
+  if (input.notes?.length) {
+    XLSX.utils.book_append_sheet(
+      book,
+      lines([["Account", "Working paper note"], ...input.notes.map((item) => [item.account, item.note])]),
+      "Notes",
+    );
+  }
   const slug = input.entityName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   XLSX.writeFile(book, `${slug}-management-accounts.xlsx`);
 }
